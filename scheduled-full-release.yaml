@@ -1,0 +1,63 @@
+name: Scheduled Full Release
+
+on:
+  workflow_call:
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: "The repository to promote the latest pre-release to a full release"
+        required: true
+        type: string
+      start-time:
+        description: "Start time of the allowed time window for deployment in America/New_York timezone"
+        required: true
+        type: string
+      end-time:
+        description: "End time of the allowed time window for deployment in America/New_York timezone"
+        required: true
+        type: string
+
+jobs:
+  promote-release:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v2
+
+    - name: Check Local Time
+      id: check_time
+      run: |
+        current_time=$(TZ='America/New_York' date +'%H:%M')
+        if [[ "$current_time" < "${{ inputs.start-time }}" || "$current_time" > "${{ inputs.end-time }}" ]]; then
+          echo "Current time ($current_time) is not within the deployment window (${{ inputs.start-time }}-${{ inputs.end-time }} America/New_York). Exiting."
+          echo "::set-output name=within_time_window::false"
+          exit 0
+        fi
+        echo "Current time ($current_time) is within the deployment window. Proceeding with the release."
+        echo "::set-output name=within_time_window::true"
+
+    - name: Get Latest Pre-Release
+      id: get_latest_prerelease
+      if: steps.check_time.outputs.within_time_window == 'true'
+      run: |
+        latest_prerelease=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+                             -H "Accept: application/vnd.github.v3+json" \
+                             https://api.github.com/repos/${{ github.repository_owner }}/${{ inputs.repository }}/releases | \
+                             jq -r '.[] | select(.prerelease == true) | .id')
+        if [ -z "$latest_prerelease" ]; then
+          echo "No pre-release found. Exiting gracefully."
+          echo "::set-output name=release_id::"
+          exit 0
+        fi
+        echo "Latest pre-release: $latest_prerelease"
+        echo "::set-output name=release_id::$latest_prerelease"
+
+    - name: Promote to Full Release
+      if: steps.get_latest_prerelease.outputs.release_id != ''
+      run: |
+        release_id=${{ steps.get_latest_prerelease.outputs.release_id }}
+        curl -X PATCH -H "Authorization: token ${{ secrets.ALL_REPO_PAT }}" \
+             -H "Accept: application/vnd.github.v3+json" \
+             https://api.github.com/repos/${{ github.repository_owner }}/${{ inputs.repository }}/releases/$release_id \
+             -d '{"make_latest": "true", "prerelease": false}'
