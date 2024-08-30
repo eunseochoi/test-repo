@@ -2,6 +2,19 @@ name: Scheduled Full Release
 
 on:
   workflow_call:
+    inputs:
+      repository:
+        description: "The repository to promote the latest pre-release to a full release"
+        required: true
+        type: string
+      start-time:
+        description: "Start time of the allowed time window for deployment in America/New_York timezone"
+        required: true
+        type: string
+      end-time:
+        description: "End time of the allowed time window for deployment in America/New_York timezone"
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       repository:
