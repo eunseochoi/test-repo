@@ -1,0 +1,26 @@
+name: Deploy to Production
+
+on: # yamllint disable-line rule:truthy
+  release:
+    types: [released, published]
+  workflow_dispatch:
+    inputs:
+      skip_check:
+        description: "Set to true to skip the task protection check. WARNING! If there is a task with active protection, then this will trigger an infinite scale! Check with #eng-data before toggling this."
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  deploy:
+    if: ${{ (github.event_name == 'release' && github.event.action == 'released') || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    name: Fake deployment
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Test Deployment
+        run: |
+          echo "running test job 2"
+          echo "github.action_ref: $(git describe --tags --abbrev=0)"

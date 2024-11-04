@@ -15,20 +15,6 @@ on:
         description: "End time of the allowed time window for deployment in America/New_York timezone"
         required: true
         type: string
-  workflow_dispatch:
-    inputs:
-      repository:
-        description: "The repository to promote the latest pre-release to a full release"
-        required: true
-        type: string
-      start-time:
-        description: "Start time of the allowed time window for deployment in America/New_York timezone"
-        required: true
-        type: string
-      end-time:
-        description: "End time of the allowed time window for deployment in America/New_York timezone"
-        required: true
-        type: string
 
 jobs:
   promote-release:
@@ -54,23 +40,54 @@ jobs:
       id: get_latest_prerelease
       if: steps.check_time.outputs.within_time_window == 'true'
       run: |
-        latest_prerelease=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-                             -H "Accept: application/vnd.github.v3+json" \
-                             https://api.github.com/repos/${{ github.repository_owner }}/${{ inputs.repository }}/releases | \
-                             jq -r '.[] | select(.prerelease == true) | .id')
-        if [ -z "$latest_prerelease" ]; then
+        api_response=$(curl -s -w "\n%{http_code}" -H "Authorization: Bearer ${{ secrets.WORKFLOW_PAT }}" \
+                       -H "Accept: application/vnd.github.v3+json" \
+                       https://api.github.com/repos/${{ github.repository_owner }}/${{ inputs.repository }}/releases)
+        
+        status_code=$(echo "$api_response" | tail -n1)
+        response_body=$(echo "$api_response" | sed '$d')
+        
+        echo "HTTP Status Code: $status_code"
+        
+        if [ "$status_code" -ne 200 ]; then
+          echo "Error: API request failed with status code $status_code"
+          echo "Response body: $response_body"
+          exit 1
+        fi
+        
+        echo "API Response: $response_body"
+        
+        latest_prerelease_info=$(echo "$response_body" | jq -r '.[] | select(.prerelease == true and .draft == false) | [.id, .tag_name] | @tsv')
+        if [ -z "$latest_prerelease_info" ]; then
           echo "No pre-release found. Exiting gracefully."
-          echo "::set-output name=release_id::"
           exit 0
         fi
-        echo "Latest pre-release: $latest_prerelease"
-        echo "::set-output name=release_id::$latest_prerelease"
+        latest_prerelease_id=$(echo "$latest_prerelease_info" | cut -f1)
+        latest_prerelease_tag=$(echo "$latest_prerelease_info" | cut -f2)
+
+        echo "Latest prerelease ID: $latest_prerelease_id"
+        echo "Latest prerelease tag: $latest_prerelease_tag"
+        echo "::set-output name=release_id::$latest_prerelease_id"
+        echo "::set-output name=tag_name::$latest_prerelease_tag"
 
     - name: Promote to Full Release
       if: steps.get_latest_prerelease.outputs.release_id != ''
       run: |
         release_id=${{ steps.get_latest_prerelease.outputs.release_id }}
-        curl -X PATCH -H "Authorization: token ${{ secrets.ALL_REPO_PAT }}" \
+        response=$(curl -s -w "\n%{http_code}" -X PATCH -H "Authorization: Bearer ${{ secrets.WORKFLOW_PAT }}" \
              -H "Accept: application/vnd.github.v3+json" \
              https://api.github.com/repos/${{ github.repository_owner }}/${{ inputs.repository }}/releases/$release_id \
-             -d '{"make_latest": "true", "prerelease": false}'
+             -d '{"make_latest": "true", "prerelease": false}')
+        
+        status_code=$(echo "$response" | tail -n1)
+        response_body=$(echo "$response" | sed '$d')
+        
+        echo "HTTP Status Code: $status_code"
+        
+        if [ "$status_code" -ne 200 ]; then
+          echo "Error: API request failed with status code $status_code"
+          echo "Response body: $response_body"
+          exit 1
+        fi
+        
+        echo "Successfully promoted release to full release"
